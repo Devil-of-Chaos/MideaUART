@@ -1,4 +1,5 @@
 #include "Appliance/AirConditioner/AirConditioner.h"
+#include "Appliance/AirConditioner/BoschQueryData.h"
 #include "Helpers/Timer.h"
 #include "Helpers/Log.h"
 
@@ -17,6 +18,31 @@ void AirConditioner::m_setup() {
     this->m_getPowerUsage();
   });
   this->m_powerUsageTimer.start(30000);
+  this->m_timerManager.registerTimer(this->m_boschExtendedTimer);
+
+  this->m_boschExtendedTimer.setCallback([this](Timer *timer) {
+    timer->reset();
+
+    static const uint8_t groups[] = {
+      0x41,
+      0x42,
+      0x44,
+      0x45
+    };
+
+    this->m_getBoschExtended(
+        groups[this->m_boschExtendedGroupIndex]
+    );
+
+    this->m_boschExtendedGroupIndex++;
+
+    if (this->m_boschExtendedGroupIndex >=
+        sizeof(groups) / sizeof(groups[0])) {
+      this->m_boschExtendedGroupIndex = 0;
+    }
+  });
+
+  this->m_boschExtendedTimer.start(5000);
 }
 
 static bool checkConstraints(const Mode &mode, const Preset &preset) {
@@ -220,6 +246,175 @@ ResponseStatus AirConditioner::m_readStatus(FrameData data) {
   setProperty(this->m_indoorHumidity, newStatus.getHumiditySetpoint(), hasUpdate);
   if (hasUpdate)
     this->sendUpdate();
+  return ResponseStatus::RESPONSE_OK;
+}
+
+void AirConditioner::m_getBoschExtended(uint8_t group) {
+  BoschQueryData data(group);
+
+  LOG_D(
+      TAG,
+      "Enqueuing BOSCH_EXTENDED(0x%02X) request...",
+      group
+  );
+
+  this->m_queueRequest(
+      FrameType::DEVICE_QUERY,
+      std::move(data),
+      std::bind(
+          &AirConditioner::m_readBoschExtended,
+          this,
+          std::placeholders::_1
+      )
+  );
+}
+
+
+ResponseStatus AirConditioner::m_readBoschExtended(FrameData data) {
+  /*
+   * Erwartete Antwort:
+   *
+   * C1 21 01 <group> ...
+   */
+
+  if (data.size() < 5)
+    return ResponseStatus::RESPONSE_WRONG;
+
+  if (data[0] != 0xC1 ||
+      data[1] != 0x21 ||
+      data[2] != 0x01)
+    return ResponseStatus::RESPONSE_WRONG;
+
+  const uint8_t group = data[3];
+
+  bool changed = false;
+
+  switch (group) {
+    case 0x41: {
+      /*
+       * Kältebringer-Mapping:
+       *
+       * C1 frame[14] -> compressor operating
+       * C1 frame[15] -> compressor demand
+       * C1 frame[21] -> indoor coil
+       * C1 frame[22] -> outdoor coil
+       *
+       * FrameData beginnt beim Payload-Typ C1.
+       * Daher entsprechen die vollständigen
+       * Framepositionen 14/15/21/22 hier
+       * den Payloadpositionen 4/5/11/12.
+       */
+
+      if (data.size() > 5) {
+        const uint8_t operating = data[4];
+        const uint8_t demand = data[5];
+
+        if (!this->m_compressorValuesKnown ||
+            operating != this->m_compressorOperatingRaw ||
+            demand != this->m_compressorDemandRaw) {
+
+          this->m_compressorOperatingRaw = operating;
+          this->m_compressorDemandRaw = demand;
+          this->m_compressorValuesKnown = true;
+
+          changed = true;
+        }
+      }
+
+      if (data.size() > 12) {
+        /*
+         * Temperaturkodierung der C1-Werte:
+         * gleiche halbe-Grad-Kodierung mit Offset 50.
+         */
+
+        const float indoor =
+            (static_cast<float>(data[11]) - 50.0f) / 2.0f;
+
+        const float outdoor =
+            (static_cast<float>(data[12]) - 50.0f) / 2.0f;
+
+        if (!this->m_indoorCoilKnown ||
+            indoor != this->m_indoorCoilTemp) {
+          this->m_indoorCoilTemp = indoor;
+          this->m_indoorCoilKnown = true;
+          changed = true;
+        }
+
+        if (!this->m_outdoorCoilKnown ||
+            outdoor != this->m_outdoorCoilTemp) {
+          this->m_outdoorCoilTemp = outdoor;
+          this->m_outdoorCoilKnown = true;
+          changed = true;
+        }
+      }
+
+      break;
+    }
+
+
+    case 0x42: {
+      /*
+       * vollständiger Frame[22]
+       * -> Payload data[12]
+       */
+
+      if (data.size() > 12) {
+        const uint8_t swing = data[12];
+
+        if (!this->m_boschSwingKnown ||
+            swing != this->m_boschSwingRaw) {
+
+          this->m_boschSwingRaw = swing;
+          this->m_boschSwingKnown = true;
+
+          changed = true;
+        }
+      }
+
+      break;
+    }
+
+
+    case 0x45: {
+      /*
+       * vollständiger Frame[18]
+       * -> Payload data[8]
+       */
+
+      if (data.size() > 8) {
+        const uint8_t fan = data[8];
+
+        if (!this->m_outdoorFanKnown ||
+            fan != this->m_outdoorFanRaw) {
+
+          this->m_outdoorFanRaw = fan;
+          this->m_outdoorFanKnown = true;
+
+          changed = true;
+        }
+      }
+
+      break;
+    }
+
+
+    case 0x44:
+      /*
+       * Die Bosch beantwortet diese Gruppe nachweislich.
+       * Noch kein zusätzliches öffentliches Feld.
+       */
+      break;
+
+
+    default:
+      return ResponseStatus::RESPONSE_WRONG;
+  }
+
+  this->m_boschExtendedValid = true;
+
+  if (changed)
+    this->sendUpdate();
+
   return ResponseStatus::RESPONSE_OK;
 }
 

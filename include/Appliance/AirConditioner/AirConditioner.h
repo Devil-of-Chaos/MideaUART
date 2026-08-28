@@ -38,6 +38,24 @@ class AirConditioner : public ApplianceBase {
   Preset getPreset() const { return this->m_preset; }
   const Capabilities &getCapabilities() const { return this->m_capabilities; }
   void displayToggle() { this->m_displayToggle(); }
+  // Bosch extended diagnostics
+  bool hasBoschExtendedData() const { return this->m_boschExtendedValid; }
+
+  bool hasIndoorCoilTemp() const { return this->m_indoorCoilKnown; }
+  float getIndoorCoilTemp() const { return this->m_indoorCoilTemp; }
+
+  bool hasOutdoorCoilTemp() const { return this->m_outdoorCoilKnown; }
+  float getOutdoorCoilTemp() const { return this->m_outdoorCoilTemp; }
+
+  bool hasCompressorValues() const { return this->m_compressorValuesKnown; }
+  uint8_t getCompressorOperatingRaw() const { return this->m_compressorOperatingRaw; }
+  uint8_t getCompressorDemandRaw() const { return this->m_compressorDemandRaw; }
+
+  bool hasOutdoorFan() const { return this->m_outdoorFanKnown; }
+  uint8_t getOutdoorFanRaw() const { return this->m_outdoorFanRaw; }
+
+  bool hasBoschSwing() const { return this->m_boschSwingKnown; }
+  uint8_t getBoschSwingRaw() const { return this->m_boschSwingRaw; }
  protected:
   void m_getPowerUsage();
   void m_getCapabilities();
@@ -45,6 +63,28 @@ class AirConditioner : public ApplianceBase {
   void m_setStatus(StatusData status);
   void m_displayToggle();
   ResponseStatus m_readStatus(FrameData data);
+  void m_getBoschExtended(uint8_t group);
+  ResponseStatus m_readBoschExtended(FrameData data);
+
+  Timer m_boschExtendedTimer;
+  uint8_t m_boschExtendedGroupIndex{0};
+
+  bool m_boschExtendedValid{false};
+
+  bool m_indoorCoilKnown{false};
+  bool m_outdoorCoilKnown{false};
+  float m_indoorCoilTemp{};
+  float m_outdoorCoilTemp{};
+
+  bool m_compressorValuesKnown{false};
+  uint8_t m_compressorOperatingRaw{};
+  uint8_t m_compressorDemandRaw{};
+
+  bool m_outdoorFanKnown{false};
+  uint8_t m_outdoorFanRaw{};
+
+  bool m_boschSwingKnown{false};
+  uint8_t m_boschSwingRaw{};
   Capabilities m_capabilities{};
   Timer m_powerUsageTimer;
   float m_indoorHumidity{};

@@ -216,6 +216,22 @@ void AirConditioner::m_displayToggle() {
   );
 }
 
+void AirConditioner::m_getBoschExtended(uint8_t group) {
+  BoschQueryData data(group);
+
+  LOG_D(TAG, "Enqueuing Bosch extended query for group 0x%02X...", group);
+
+  this->m_queueRequest(
+      FrameType::DEVICE_QUERY,
+      std::move(data),
+      std::bind(
+          &AirConditioner::m_readBoschExtended,
+          this,
+          std::placeholders::_1
+      )
+  );
+}
+
 template<typename T>
 void setProperty(T &property, const T &value, bool &update) {
   if (property != value) {

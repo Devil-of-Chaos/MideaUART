@@ -249,27 +249,6 @@ ResponseStatus AirConditioner::m_readStatus(FrameData data) {
   return ResponseStatus::RESPONSE_OK;
 }
 
-void AirConditioner::m_getBoschExtended(uint8_t group) {
-  BoschQueryData data(group);
-
-  LOG_D(
-      TAG,
-      "Enqueuing BOSCH_EXTENDED(0x%02X) request...",
-      group
-  );
-
-  this->m_queueRequest(
-      FrameType::DEVICE_QUERY,
-      std::move(data),
-      std::bind(
-          &AirConditioner::m_readBoschExtended,
-          this,
-          std::placeholders::_1
-      )
-  );
-}
-
-
 ResponseStatus AirConditioner::m_readBoschExtended(FrameData data) {
   /*
    * Erwartete Antwort:
@@ -280,12 +259,14 @@ ResponseStatus AirConditioner::m_readBoschExtended(FrameData data) {
   if (data.size() < 5)
     return ResponseStatus::RESPONSE_WRONG;
 
-  if (data[0] != 0xC1 ||
-      data[1] != 0x21 ||
-      data[2] != 0x01)
+  const uint8_t *raw = data.data();
+
+  if (raw[0] != 0xC1 ||
+      raw[1] != 0x21 ||
+      raw[2] != 0x01)
     return ResponseStatus::RESPONSE_WRONG;
 
-  const uint8_t group = data[3];
+  const uint8_t group = raw[3];
 
   bool changed = false;
 
@@ -306,8 +287,8 @@ ResponseStatus AirConditioner::m_readBoschExtended(FrameData data) {
        */
 
       if (data.size() > 5) {
-        const uint8_t operating = data[4];
-        const uint8_t demand = data[5];
+        const uint8_t operating = raw[4];
+        const uint8_t demand = raw[5];
 
         if (!this->m_compressorValuesKnown ||
             operating != this->m_compressorOperatingRaw ||
@@ -323,18 +304,19 @@ ResponseStatus AirConditioner::m_readBoschExtended(FrameData data) {
 
       if (data.size() > 12) {
         /*
-         * Temperaturkodierung der C1-Werte:
-         * gleiche halbe-Grad-Kodierung mit Offset 50.
+         * Temperaturkodierung:
+         * halbe Grad mit Offset 50.
          */
 
         const float indoor =
-            (static_cast<float>(data[11]) - 50.0f) / 2.0f;
+            (static_cast<float>(raw[11]) - 50.0f) / 2.0f;
 
         const float outdoor =
-            (static_cast<float>(data[12]) - 50.0f) / 2.0f;
+            (static_cast<float>(raw[12]) - 50.0f) / 2.0f;
 
         if (!this->m_indoorCoilKnown ||
             indoor != this->m_indoorCoilTemp) {
+
           this->m_indoorCoilTemp = indoor;
           this->m_indoorCoilKnown = true;
           changed = true;
@@ -342,6 +324,7 @@ ResponseStatus AirConditioner::m_readBoschExtended(FrameData data) {
 
         if (!this->m_outdoorCoilKnown ||
             outdoor != this->m_outdoorCoilTemp) {
+
           this->m_outdoorCoilTemp = outdoor;
           this->m_outdoorCoilKnown = true;
           changed = true;
@@ -351,15 +334,14 @@ ResponseStatus AirConditioner::m_readBoschExtended(FrameData data) {
       break;
     }
 
-
     case 0x42: {
       /*
        * vollständiger Frame[22]
-       * -> Payload data[12]
+       * -> Payload raw[12]
        */
 
       if (data.size() > 12) {
-        const uint8_t swing = data[12];
+        const uint8_t swing = raw[12];
 
         if (!this->m_boschSwingKnown ||
             swing != this->m_boschSwingRaw) {
@@ -374,15 +356,21 @@ ResponseStatus AirConditioner::m_readBoschExtended(FrameData data) {
       break;
     }
 
+    case 0x44:
+      /*
+       * Die Bosch beantwortet diese Gruppe.
+       * Noch kein zusätzlich ausgewertetes Feld.
+       */
+      break;
 
     case 0x45: {
       /*
        * vollständiger Frame[18]
-       * -> Payload data[8]
+       * -> Payload raw[8]
        */
 
       if (data.size() > 8) {
-        const uint8_t fan = data[8];
+        const uint8_t fan = raw[8];
 
         if (!this->m_outdoorFanKnown ||
             fan != this->m_outdoorFanRaw) {
@@ -396,15 +384,6 @@ ResponseStatus AirConditioner::m_readBoschExtended(FrameData data) {
 
       break;
     }
-
-
-    case 0x44:
-      /*
-       * Die Bosch beantwortet diese Gruppe nachweislich.
-       * Noch kein zusätzliches öffentliches Feld.
-       */
-      break;
-
 
     default:
       return ResponseStatus::RESPONSE_WRONG;

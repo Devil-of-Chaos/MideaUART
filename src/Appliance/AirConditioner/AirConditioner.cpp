@@ -260,6 +260,94 @@ ResponseStatus AirConditioner::m_readStatus(FrameData data) {
   setProperty(this->m_indoorTemp, newStatus.getIndoorTemp(), hasUpdate);
   setProperty(this->m_outdoorTemp, newStatus.getOutdoorTemp(), hasUpdate);
   setProperty(this->m_indoorHumidity, newStatus.getHumiditySetpoint(), hasUpdate);
+
+  const uint8_t *raw = data.data();
+
+// ---------------------------------------------------------
+// Indoor fan feedback
+// C0 payload[3] == full frame[13]
+// ---------------------------------------------------------
+if (data.size() > 3) {
+  const uint8_t fan = raw[3];
+
+  if ((fan >= 1 && fan <= 100) ||
+      fan == 0x65 ||
+      fan == 0x66) {
+
+    if (!this->m_indoorFanKnown ||
+        fan != this->m_indoorFanRaw) {
+
+      this->m_indoorFanRaw = fan;
+      this->m_indoorFanKnown = true;
+      hasUpdate = true;
+    }
+  }
+}
+
+// ---------------------------------------------------------
+// Follow Me active
+// C0 payload[8] == full frame[18]
+// ---------------------------------------------------------
+if (data.size() > 8) {
+  const bool followMe =
+      (raw[8] & 0x80U) != 0;
+
+  if (!this->m_followMeKnown ||
+      followMe != this->m_followMeActive) {
+
+    this->m_followMeKnown = true;
+    this->m_followMeActive = followMe;
+    hasUpdate = true;
+  }
+}
+
+// ---------------------------------------------------------
+// Follow Me reported temperature
+// C0 payload[11] == full frame[21]
+// ---------------------------------------------------------
+if (data.size() > 11) {
+  const uint8_t tempRaw = raw[11];
+
+  if (tempRaw >= 0x32 &&
+      tempRaw <= 0x80) {
+
+    const float temperature =
+        (static_cast<float>(tempRaw) - 50.0f) / 2.0f;
+
+    if (!this->m_followMeTemperatureKnown ||
+        temperature != this->m_followMeTemperature) {
+
+      this->m_followMeTemperature = temperature;
+      this->m_followMeTemperatureKnown = true;
+      hasUpdate = true;
+    }
+  }
+}
+
+// ---------------------------------------------------------
+// Display state
+// C0 payload[14] == full frame[24]
+// 0x00 = ON
+// 0x70 = OFF
+// ---------------------------------------------------------
+if (data.size() > 14) {
+  const uint8_t display = raw[14];
+
+  if (display == 0x00 ||
+      display == 0x70) {
+
+    const bool displayOn =
+        display == 0x00;
+
+    if (!this->m_displayStatusKnown ||
+        displayOn != this->m_displayOn) {
+
+      this->m_displayStatusKnown = true;
+      this->m_displayOn = displayOn;
+      hasUpdate = true;
+    }
+  }
+}
   if (hasUpdate)
     this->sendUpdate();
   return ResponseStatus::RESPONSE_OK;

@@ -56,6 +56,23 @@ class AirConditioner : public ApplianceBase {
 
   bool hasBoschSwing() const { return this->m_boschSwingKnown; }
   uint8_t getBoschSwingRaw() const { return this->m_boschSwingRaw; }
+
+  // Runtime status from normal C0 response
+  bool hasDisplayStatus() const { return this->m_displayStatusKnown; }
+  bool isDisplayOn() const { return this->m_displayOn; }
+
+  bool hasIndoorFanStatus() const { return this->m_indoorFanKnown; }
+  uint8_t getIndoorFanRaw() const { return this->m_indoorFanRaw; }
+
+  bool isIndoorFanAuto() const { return this->m_indoorFanKnown && (this->m_indoorFanRaw == 0x65 || this->m_indoorFanRaw == 0x66); }
+  bool hasIndoorFanPercent() const { return this->m_indoorFanKnown && this->m_indoorFanRaw >= 1 && this->m_indoorFanRaw <= 100; }
+  float getIndoorFanPercent() const { return static_cast<float>(this->m_indoorFanRaw); }
+
+  bool hasFollowMeStatus() const { return this->m_followMeKnown; }
+  bool isFollowMeActive() const { return this->m_followMeKnown && this->m_followMeActive; }
+  bool hasFollowMeTemperature() const { return this->m_followMeTemperatureKnown; }
+  float getFollowMeTemperature() const { return this->m_followMeTemperature; }
+
  protected:
   void m_getPowerUsage();
   void m_getCapabilities();
@@ -85,6 +102,20 @@ class AirConditioner : public ApplianceBase {
 
   bool m_boschSwingKnown{false};
   uint8_t m_boschSwingRaw{};
+
+  // Runtime status from normal C0 response
+  bool m_displayStatusKnown{false};
+  bool m_displayOn{false};
+
+  bool m_indoorFanKnown{false};
+  uint8_t m_indoorFanRaw{0};
+
+  bool m_followMeKnown{false};
+  bool m_followMeActive{false};
+
+  bool m_followMeTemperatureKnown{false};
+  float m_followMeTemperature{0.0f};
+
   Capabilities m_capabilities{};
   Timer m_powerUsageTimer;
   float m_indoorHumidity{};

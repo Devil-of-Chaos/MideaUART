@@ -364,9 +364,12 @@ bool AirConditioner::m_sendLouverCommand() {
 
 bool AirConditioner::m_sendLouverStatusQuery() {
   static const uint8_t query[] = {
-    0xAA, 0x11, 0xAC, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x02, 0x03, 0xB1, 0x02,
-    0x09, 0x00, 0x0A, 0x00, 0xC7, 0xB1
+    0xAA, 0x13, 0xAC, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x02, 0x03, 0xB1, 0x03,
+    0x09, 0x00,  // vertikale Lamelle
+    0x0A, 0x00,  // horizontale Lamelle
+    0x15, 0x00,  // echte Innenluftfeuchte
+    0xF4, 0x6C   // CRC + Prüfsumme
   };
 
   return this->m_sendRawFrame(query, sizeof(query));
@@ -394,23 +397,37 @@ void AirConditioner::m_readLouverStatus(FrameData data) {
       break;
 
     if (valueLength >= 1) {
-      const uint8_t position = louverRawToIndex(raw[valuePos]);
-
-      if (property == 0x0009 && position != 0) {
-        if (!this->m_verticalLouverKnown ||
-            this->m_verticalLouverPosition != position) {
-          this->m_verticalLouverPosition = position;
-          this->m_verticalLouverKnown = true;
+      const uint8_t value = raw[valuePos];
+    
+      LOG_D(TAG, "Bosch B1 property 0x%04X = %u", property, value);
+    
+      if (property == 0x0015) {
+        if (value <= 100 &&
+            (!this->m_indoorHumidityKnown ||
+             this->m_indoorHumidity != value)) {
+          this->m_indoorHumidity = value;
+          this->m_indoorHumidityKnown = true;
           changed = true;
         }
-      }
-
-      if (property == 0x000A && position != 0) {
-        if (!this->m_horizontalLouverKnown ||
-            this->m_horizontalLouverPosition != position) {
-          this->m_horizontalLouverPosition = position;
-          this->m_horizontalLouverKnown = true;
-          changed = true;
+      } else {
+        const uint8_t position = louverRawToIndex(value);
+    
+        if (property == 0x0009 && position != 0) {
+          if (!this->m_verticalLouverKnown ||
+              this->m_verticalLouverPosition != position) {
+            this->m_verticalLouverPosition = position;
+            this->m_verticalLouverKnown = true;
+            changed = true;
+          }
+        }
+    
+        if (property == 0x000A && position != 0) {
+          if (!this->m_horizontalLouverKnown ||
+              this->m_horizontalLouverPosition != position) {
+            this->m_horizontalLouverPosition = position;
+            this->m_horizontalLouverKnown = true;
+            changed = true;
+          }
         }
       }
     }
@@ -483,7 +500,7 @@ ResponseStatus AirConditioner::m_readStatus(FrameData data) {
   setProperty(this->m_targetTemp, newStatus.getTargetTemp(), hasUpdate);
   setProperty(this->m_indoorTemp, newStatus.getIndoorTemp(), hasUpdate);
   setProperty(this->m_outdoorTemp, newStatus.getOutdoorTemp(), hasUpdate);
-  setProperty(this->m_indoorHumidity, newStatus.getHumiditySetpoint(), hasUpdate);
+  setProperty(this->m_humiditySetpoint, newStatus.getHumiditySetpoint(), hasUpdate);
 
   const uint8_t *raw = data.data();
 

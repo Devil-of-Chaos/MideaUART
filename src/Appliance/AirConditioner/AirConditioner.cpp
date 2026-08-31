@@ -263,91 +263,96 @@ ResponseStatus AirConditioner::m_readStatus(FrameData data) {
 
   const uint8_t *raw = data.data();
 
-// ---------------------------------------------------------
-// Indoor fan feedback
-// C0 payload[3] == full frame[13]
-// ---------------------------------------------------------
-if (data.size() > 3) {
-  const uint8_t fan = raw[3];
+  // ---------------------------------------------------------
+  // Indoor fan feedback
+  // C0 payload[3] == full frame[13]
+  // ---------------------------------------------------------
+  if (data.size() > 3) {
+    const uint8_t fan = raw[3];
+  
+    if ((fan >= 1 && fan <= 100) ||
+        fan == 0x65 ||
+        fan == 0x66) {
+  
+      if (!this->m_indoorFanKnown ||
+          fan != this->m_indoorFanRaw) {
+  
+        this->m_indoorFanRaw = fan;
+        this->m_indoorFanKnown = true;
+        hasUpdate = true;
+      }
+    }
+  }
 
-  if ((fan >= 1 && fan <= 100) ||
-      fan == 0x65 ||
-      fan == 0x66) {
-
-    if (!this->m_indoorFanKnown ||
-        fan != this->m_indoorFanRaw) {
-
-      this->m_indoorFanRaw = fan;
-      this->m_indoorFanKnown = true;
+  // ---------------------------------------------------------
+  // Follow Me active
+  // C0 payload[8] == full frame[18]
+  // ---------------------------------------------------------
+  if (data.size() > 8) {
+    const bool followMe =
+        (raw[8] & 0x80U) != 0;
+  
+    if (!this->m_followMeKnown ||
+        followMe != this->m_followMeActive) {
+  
+      this->m_followMeKnown = true;
+      this->m_followMeActive = followMe;
       hasUpdate = true;
     }
   }
-}
-
-// ---------------------------------------------------------
-// Follow Me active
-// C0 payload[8] == full frame[18]
-// ---------------------------------------------------------
-if (data.size() > 8) {
-  const bool followMe =
-      (raw[8] & 0x80U) != 0;
-
-  if (!this->m_followMeKnown ||
-      followMe != this->m_followMeActive) {
-
-    this->m_followMeKnown = true;
-    this->m_followMeActive = followMe;
-    hasUpdate = true;
-  }
-}
-
-// ---------------------------------------------------------
-// Follow Me reported temperature
-// C0 payload[11] == full frame[21]
-// ---------------------------------------------------------
-if (data.size() > 11) {
-  const uint8_t tempRaw = raw[11];
-
-  if (tempRaw >= 0x32 &&
-      tempRaw <= 0x80) {
-
-    const float temperature =
-        (static_cast<float>(tempRaw) - 50.0f) / 2.0f;
-
-    if (!this->m_followMeTemperatureKnown ||
-        temperature != this->m_followMeTemperature) {
-
-      this->m_followMeTemperature = temperature;
-      this->m_followMeTemperatureKnown = true;
-      hasUpdate = true;
+  
+  // ---------------------------------------------------------
+  // Follow Me reported temperature
+  // C0 payload[11] == full frame[21]
+  // ---------------------------------------------------------
+  if (data.size() > 11) {
+    const uint8_t tempRaw = raw[11];
+  
+    if (tempRaw >= 0x32 &&
+        tempRaw <= 0x80) {
+  
+      const float temperature =
+          (static_cast<float>(tempRaw) - 50.0f) / 2.0f;
+  
+      if (!this->m_followMeTemperatureKnown ||
+          temperature != this->m_followMeTemperature) {
+  
+        this->m_followMeTemperature = temperature;
+        this->m_followMeTemperatureKnown = true;
+        hasUpdate = true;
+      }
     }
   }
-}
+  
+  // LED display state. C0 payload[14] == complete frame[24].
+  constexpr uint8_t DISPLAY_STATUS_OFFSET = 14;
+  constexpr uint8_t DISPLAY_ON = 0x00;
+  constexpr uint8_t DISPLAY_OFF = 0x70;
 
-// ---------------------------------------------------------
-// Display state
-// C0 payload[14] == full frame[24]
-// 0x00 = ON
-// 0x70 = OFF
-// ---------------------------------------------------------
-if (data.size() > 14) {
-  const uint8_t display = raw[14];
+  if (data.size() > DISPLAY_STATUS_OFFSET) {
+    const uint8_t display = raw[DISPLAY_STATUS_OFFSET];
+    const bool rawChanged =
+        !this->m_displayStatusRawKnown || display != this->m_displayStatusRaw;
 
-  if (display == 0x00 ||
-      display == 0x70) {
+    this->m_displayStatusRawKnown = true;
+    this->m_displayStatusRaw = display;
 
-    const bool displayOn =
-        display == 0x00;
+    if (display == DISPLAY_ON || display == DISPLAY_OFF) {
+      const bool displayOn = display == DISPLAY_ON;
 
-    if (!this->m_displayStatusKnown ||
-        displayOn != this->m_displayOn) {
-
-      this->m_displayStatusKnown = true;
-      this->m_displayOn = displayOn;
-      hasUpdate = true;
+      if (!this->m_displayStatusKnown || displayOn != this->m_displayOn) {
+        LOG_D(TAG, "LED display is %s (C0[14] = 0x%02X)",
+              displayOn ? "ON" : "OFF", display);
+        this->m_displayStatusKnown = true;
+        this->m_displayOn = displayOn;
+        hasUpdate = true;
+      }
+    } else if (rawChanged) {
+      LOG_D(TAG, "Unrecognised LED display value in C0[14]: 0x%02X", display);
     }
   }
-}
+
+  
   if (hasUpdate)
     this->sendUpdate();
   return ResponseStatus::RESPONSE_OK;
@@ -377,7 +382,7 @@ ResponseStatus AirConditioner::m_readBoschExtended(FrameData data) {
   switch (group) {
     case 0x41: {
       /*
-       * Kältebringer-Mapping:
+       * Observed-Mapping:
        *
        * C1 frame[14] -> compressor operating
        * C1 frame[15] -> compressor demand

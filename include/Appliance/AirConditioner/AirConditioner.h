@@ -60,6 +60,8 @@ class AirConditioner : public ApplianceBase {
   // Runtime status from normal C0 response
   bool hasDisplayStatus() const { return this->m_displayStatusKnown; }
   bool isDisplayOn() const { return this->m_displayOn; }
+  bool hasDisplayStatusRaw() const { return this->m_displayStatusRawKnown; }
+  uint8_t getDisplayStatusRaw() const { return this->m_displayStatusRaw; }
 
   bool hasIndoorFanStatus() const { return this->m_indoorFanKnown; }
   uint8_t getIndoorFanRaw() const { return this->m_indoorFanRaw; }
@@ -106,6 +108,9 @@ class AirConditioner : public ApplianceBase {
   // Runtime status from normal C0 response
   bool m_displayStatusKnown{false};
   bool m_displayOn{false};
+
+  bool m_displayStatusRawKnown{false};
+  uint8_t m_displayStatusRaw{0};
 
   bool m_indoorFanKnown{false};
   uint8_t m_indoorFanRaw{0};

@@ -9,6 +9,55 @@ namespace ac {
 
 static const char *TAG = "AirConditioner";
 
+static uint8_t louverIndexToRaw(uint8_t index) {
+  switch (index) {
+    case 1: return 1;
+    case 2: return 25;
+    case 3: return 50;
+    case 4: return 75;
+    case 5: return 100;
+    default: return 0;
+  }
+}
+
+static uint8_t louverRawToIndex(uint8_t raw) {
+  switch (raw) {
+    case 1: return 1;
+    case 25: return 2;
+    case 50: return 3;
+    case 75: return 4;
+    case 100: return 5;
+    default: return 0;
+  }
+}
+
+static uint8_t crc8Maxim(const uint8_t *data, uint8_t size) {
+  uint8_t crc = 0;
+
+  for (uint8_t i = 0; i < size; i++) {
+    uint8_t value = data[i];
+
+    for (uint8_t bit = 0; bit < 8; bit++) {
+      const uint8_t mix = (crc ^ value) & 0x01U;
+      crc >>= 1U;
+      if (mix != 0)
+        crc ^= 0x8CU;
+      value >>= 1U;
+    }
+  }
+
+  return crc;
+}
+
+static uint8_t frameChecksum(const uint8_t *data, uint8_t sizeWithoutChecksum) {
+  uint8_t sum = 0;
+
+  for (uint8_t i = 1; i < sizeWithoutChecksum; i++)
+    sum = static_cast<uint8_t>(sum + data[i]);
+
+  return static_cast<uint8_t>(0U - sum);
+}
+
 void AirConditioner::m_setup() {
   if (this->m_autoconfStatus != AUTOCONF_DISABLED)
     this->m_getCapabilities();
@@ -43,6 +92,21 @@ void AirConditioner::m_setup() {
   });
 
   this->m_boschExtendedTimer.start(5000);
+    this->m_timerManager.registerTimer(this->m_louverRefreshTimer);
+  this->m_louverRefreshTimer.setCallback([this](Timer *timer) {
+    timer->stop();
+    this->m_louverQueryPending = true;
+  });
+
+  this->m_timerManager.registerTimer(this->m_louverPollTimer);
+  this->m_louverPollTimer.setCallback([this](Timer *timer) {
+    this->m_louverQueryPending = true;
+    timer->reset();
+  });
+  this->m_louverPollTimer.start(60000);
+
+  // Einmal beim Start die echte Stellung lesen.
+  this->m_louverQueryPending = true;
 }
 
 static bool checkConstraints(const Mode &mode, const Preset &preset) {
@@ -196,6 +260,166 @@ void AirConditioner::m_getCapabilities() {
       this->m_autoconfStatus = AUTOCONF_ERROR;
     }
   );
+}
+
+void AirConditioner::m_onIdle() {
+  if (this->m_louverCommandPending) {
+    this->m_louverCommandPending = false;
+
+    if (this->m_sendLouverCommand()) {
+      // Das Innengerät kurz arbeiten lassen, danach B1-Rückmeldung lesen.
+      this->m_louverRefreshTimer.start(1500);
+    } else {
+      LOG_W(TAG, "Louver command could not be sent.");
+    }
+    return;
+  }
+
+  if (this->m_louverQueryPending) {
+    this->m_louverQueryPending = false;
+
+    if (!this->m_sendLouverStatusQuery())
+      LOG_W(TAG, "Louver status query could not be sent.");
+
+    return;
+  }
+
+  this->m_getStatus();
+}
+
+void AirConditioner::m_onRequest(const Frame &frame) {
+  if (!frame.hasType(DEVICE_QUERY))
+    return;
+
+  FrameData data = frame.getData();
+  if (data.size() == 0 || !data.hasID(0xB1))
+    return;
+
+  this->m_readLouverStatus(data);
+}
+
+bool AirConditioner::setVerticalLouverPosition(uint8_t position) {
+  if (position < 1 || position > 5)
+    return false;
+
+  // B0 setzt immer beide Achsen: erst die Iststellung lesen, nichts blind zentrieren.
+  if (!this->m_verticalLouverKnown || !this->m_horizontalLouverKnown) {
+    this->m_louverQueryPending = true;
+    LOG_W(TAG, "Louver positions are not known yet; retry in a few seconds.");
+    return false;
+  }
+
+  this->m_pendingVerticalLouverPosition = position;
+  this->m_pendingHorizontalLouverPosition = this->m_horizontalLouverPosition;
+  this->m_louverCommandPending = true;
+  return true;
+}
+
+bool AirConditioner::setHorizontalLouverPosition(uint8_t position) {
+  if (position < 1 || position > 5)
+    return false;
+
+  if (!this->m_verticalLouverKnown || !this->m_horizontalLouverKnown) {
+    this->m_louverQueryPending = true;
+    LOG_W(TAG, "Louver positions are not known yet; retry in a few seconds.");
+    return false;
+  }
+
+  this->m_pendingVerticalLouverPosition = this->m_verticalLouverPosition;
+  this->m_pendingHorizontalLouverPosition = position;
+  this->m_louverCommandPending = true;
+  return true;
+}
+
+bool AirConditioner::m_sendLouverCommand() {
+  const uint8_t vertical = louverIndexToRaw(this->m_pendingVerticalLouverPosition);
+  const uint8_t horizontal = louverIndexToRaw(this->m_pendingHorizontalLouverPosition);
+
+  if (vertical == 0 || horizontal == 0)
+    return false;
+
+  uint8_t frame[] = {
+    0xAA, 0x16, 0xAC, 0x82, 0x00, 0x00, 0x00, 0x00,
+    0x02, 0x02, 0xB0, 0x02,
+    0x09, 0x00, 0x01, vertical,
+    0x0A, 0x00, 0x01, horizontal,
+    this->m_louverMessageId++, 0x00, 0x00
+  };
+
+  frame[21] = crc8Maxim(frame + 10, 11);
+  frame[22] = frameChecksum(frame, 22);
+
+  const bool sent = this->m_sendRawFrame(frame, sizeof(frame));
+
+  if (sent) {
+    this->m_verticalLouverPosition = this->m_pendingVerticalLouverPosition;
+    this->m_horizontalLouverPosition = this->m_pendingHorizontalLouverPosition;
+    this->m_verticalLouverKnown = true;
+    this->m_horizontalLouverKnown = true;
+    this->sendUpdate();
+  }
+
+  return sent;
+}
+
+bool AirConditioner::m_sendLouverStatusQuery() {
+  static const uint8_t query[] = {
+    0xAA, 0x11, 0xAC, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x02, 0x03, 0xB1, 0x02,
+    0x09, 0x00, 0x0A, 0x00, 0xC7, 0xB1
+  };
+
+  return this->m_sendRawFrame(query, sizeof(query));
+}
+
+void AirConditioner::m_readLouverStatus(FrameData data) {
+  if (data.size() < 3)
+    return;
+
+  const uint8_t *raw = data.data();
+  const uint8_t count = raw[1];
+  const size_t crcIndex = data.size() - 1;
+  size_t pos = 2;
+  bool changed = false;
+
+  for (uint8_t i = 0; i < count && pos + 4 <= crcIndex; i++) {
+    const uint16_t property =
+        static_cast<uint16_t>(raw[pos]) |
+        (static_cast<uint16_t>(raw[pos + 1]) << 8);
+
+    const uint8_t valueLength = raw[pos + 3];
+    const size_t valuePos = pos + 4;
+
+    if (valuePos + valueLength > crcIndex)
+      break;
+
+    if (valueLength >= 1) {
+      const uint8_t position = louverRawToIndex(raw[valuePos]);
+
+      if (property == 0x0009 && position != 0) {
+        if (!this->m_verticalLouverKnown ||
+            this->m_verticalLouverPosition != position) {
+          this->m_verticalLouverPosition = position;
+          this->m_verticalLouverKnown = true;
+          changed = true;
+        }
+      }
+
+      if (property == 0x000A && position != 0) {
+        if (!this->m_horizontalLouverKnown ||
+            this->m_horizontalLouverPosition != position) {
+          this->m_horizontalLouverPosition = position;
+          this->m_horizontalLouverKnown = true;
+          changed = true;
+        }
+      }
+    }
+
+    pos = valuePos + valueLength;
+  }
+
+  if (changed)
+    this->sendUpdate();
 }
 
 void AirConditioner::m_getStatus() {

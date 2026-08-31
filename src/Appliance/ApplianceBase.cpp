@@ -216,16 +216,34 @@ void ApplianceBase::m_destroyRequest() {
   this->m_request = nullptr;
 }
 
-void ApplianceBase::m_sendFrame(FrameType type, const FrameData &data) {
-  Frame frame(this->m_appType, this->m_protocol, type, data);
-  LOG_D(TAG, "TX: %s", frame.toString().c_str());
-  this->m_stream->write(frame.data(), frame.size());
+bool ApplianceBase::m_sendRawFrame(const uint8_t *data, uint8_t size) {
+  if (this->m_stream == nullptr || data == nullptr || size == 0) {
+    LOG_W(TAG, "Cannot send an empty raw frame.");
+    return false;
+  }
+
+  const size_t written = this->m_stream->write(data, size);
+  if (written != size) {
+    LOG_W(TAG, "Raw frame write failed (%u/%u bytes).",
+          static_cast<unsigned>(written),
+          static_cast<unsigned>(size));
+    return false;
+  }
+
   this->m_isBusy = true;
   this->m_periodTimer.setCallback([this](Timer *timer) {
     this->m_isBusy = false;
     timer->stop();
   });
   this->m_periodTimer.start(this->m_period);
+
+  return true;
+}
+
+void ApplianceBase::m_sendFrame(FrameType type, const FrameData &data) {
+  Frame frame(this->m_appType, this->m_protocol, type, data);
+  LOG_D(TAG, "TX: %s", frame.toString().c_str());
+  this->m_sendRawFrame(frame.data(), frame.size());
 }
 
 void ApplianceBase::m_queueRequest(FrameType type, FrameData data, ResponseHandler onData, Handler onSuccess, Handler onError) {

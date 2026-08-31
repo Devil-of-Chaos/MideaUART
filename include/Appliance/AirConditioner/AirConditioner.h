@@ -31,7 +31,16 @@ class AirConditioner : public ApplianceBase {
   float getTargetTemp() const { return this->m_targetTemp; }
   float getIndoorTemp() const { return this->m_indoorTemp; }
   float getOutdoorTemp() const { return this->m_outdoorTemp; }
-  float getIndoorHum() const { return this->m_indoorHumidity; }
+  // C0: Sollwert für Dry-Modus, keine Messung.
+  float getHumiditySetpoint() const { return this->m_humiditySetpoint; }
+  
+  // Für Rückwärtskompatibilität mit vorhandenen Nutzern des Forks.
+  float getIndoorHum() const { return this->m_humiditySetpoint; }
+  
+  // B1 Property 0x0015: tatsächliche Messung des Innengeräts.
+  bool hasIndoorHumidity() const { return this->m_indoorHumidityKnown; }
+  float getIndoorHumidity() const { return static_cast<float>(this->m_indoorHumidity); }
+
   float getPowerUsage() const { return this->m_powerUsage; }
   Mode getMode() const { return this->m_mode; }
   SwingMode getSwingMode() const { return this->m_swingMode; }
@@ -154,7 +163,12 @@ class AirConditioner : public ApplianceBase {
 
   Capabilities m_capabilities{};
   Timer m_powerUsageTimer;
-  float m_indoorHumidity{};
+
+  float m_humiditySetpoint{};
+  
+  bool m_indoorHumidityKnown{false};
+  uint8_t m_indoorHumidity{0};
+
   float m_indoorTemp{};
   float m_outdoorTemp{};
   float m_targetTemp{};

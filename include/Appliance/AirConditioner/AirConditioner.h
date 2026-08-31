@@ -22,7 +22,8 @@ class AirConditioner : public ApplianceBase {
  public:
   AirConditioner() : ApplianceBase(AIR_CONDITIONER) {}
   void m_setup() override;
-  void m_onIdle() override { this->m_getStatus(); }
+  void m_onIdle() override;
+  void m_onRequest(const Frame &frame) override;
   void control(const Control &control);
   void setPowerState(bool state);
   bool getPowerState() const { return this->m_mode != Mode::MODE_OFF; }
@@ -38,6 +39,17 @@ class AirConditioner : public ApplianceBase {
   Preset getPreset() const { return this->m_preset; }
   const Capabilities &getCapabilities() const { return this->m_capabilities; }
   void displayToggle() { this->m_displayToggle(); }
+
+  bool setVerticalLouverPosition(uint8_t position);
+  bool setHorizontalLouverPosition(uint8_t position);
+  void requestLouverStatus() { this->m_louverQueryPending = true; }
+
+  bool hasVerticalLouverPosition() const { return this->m_verticalLouverKnown; }
+  bool hasHorizontalLouverPosition() const { return this->m_horizontalLouverKnown; }
+
+  uint8_t getVerticalLouverPosition() const { return this->m_verticalLouverPosition; }
+  uint8_t getHorizontalLouverPosition() const { return this->m_horizontalLouverPosition; }
+
   // Bosch extended diagnostics
   bool hasBoschExtendedData() const { return this->m_boschExtendedValid; }
 
@@ -120,6 +132,25 @@ class AirConditioner : public ApplianceBase {
 
   bool m_followMeTemperatureKnown{false};
   float m_followMeTemperature{0.0f};
+
+  bool m_sendLouverCommand();
+  bool m_sendLouverStatusQuery();
+  void m_readLouverStatus(FrameData data);
+
+  Timer m_louverRefreshTimer;
+  Timer m_louverPollTimer;
+
+  bool m_louverCommandPending{false};
+  bool m_louverQueryPending{false};
+
+  uint8_t m_pendingVerticalLouverPosition{3};
+  uint8_t m_pendingHorizontalLouverPosition{3};
+  uint8_t m_louverMessageId{0};
+
+  bool m_verticalLouverKnown{false};
+  bool m_horizontalLouverKnown{false};
+  uint8_t m_verticalLouverPosition{3};
+  uint8_t m_horizontalLouverPosition{3};
 
   Capabilities m_capabilities{};
   Timer m_powerUsageTimer;

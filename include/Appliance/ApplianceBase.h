@@ -91,6 +91,7 @@ class ApplianceBase {
   void m_queueRequest(FrameType type, FrameData data, ResponseHandler onData, Handler onSuccess = nullptr, Handler onError = nullptr);
   void m_queueRequestPriority(FrameType type, FrameData data, ResponseHandler onData = nullptr, Handler onSuccess = nullptr, Handler onError = nullptr);
   void m_sendFrame(FrameType type, const FrameData &data);
+  bool m_sendRawFrame(const uint8_t *data, uint8_t size);
   // Setup for appliances
   virtual void m_setup() {}
   // Loop for appliances
